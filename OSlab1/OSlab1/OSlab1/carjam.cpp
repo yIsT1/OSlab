@@ -28,6 +28,8 @@ direc_dl_happen di;
 
 //判断右方是否有来车
 bool e_coming, w_coming, n_coming, s_coming;
+//判断左方车辆是否等待
+bool  e_waiting, w_waiting, n_waiting, s_waiting;
 
 class car_queue {
 	//队列记录车辆的编号
@@ -56,12 +58,14 @@ car_queue from_e, from_w, from_s, from_n;
 void* manage_e(void*) {
 	//保护用
 	pthread_mutex_lock(&mtx_e_in);
+	pthread_mutex_lock(&mtx_e);
 	//在路口外等待出发信号唤醒,收到出发信号后进入下一步
-	pthread_cond_wait(&e_go, &mtx_e_in);
-	pthread_mutex_unlock(&mtx_e_in);
+	pthread_cond_wait(&e_go, &mtx_e);
+
 
 	//标记该方向有车进入，左方车辆如果检查到该值为真，会停在其第一个路口内等待本车通过
 	e_coming = true;
+	e_waiting = false;
 	//从对应方向队列中取出头车
 	int num = from_e.car_leave();
 	//输出车辆到达路口的相关信息
@@ -79,11 +83,11 @@ void* manage_e(void*) {
 		pthread_cond_signal(&deadlock);
 
 		//停在路口外，等待死锁解决后重新启动
-		pthread_mutex_lock(&mtx_e);
+
 		pthread_cond_wait(&dead_solve, &mtx_e);
 		//由于左侧车等待过该车，死锁解决后通过时将会发出一个启动信号
 		pthread_cond_wait(&e_go,&mtx_e);
-		pthread_mutex_unlock(&mtx_e);
+
 	}
 	else 
 		pthread_mutex_unlock(&mtx);
@@ -93,7 +97,7 @@ void* manage_e(void*) {
 	from_e.count--;
 	pthread_mutex_lock(&b);
 	//进入路口耗费时间
-	usleep(100);
+	usleep(1000);
 
 	//此时检查右方是否有来车，若有则等待
 	//右方车辆通过后会给它发送一个启动信号
@@ -104,17 +108,22 @@ void* manage_e(void*) {
 	if (n_coming) {
 		//设置曾等待
 		waited = true;
+		e_waiting = true;
 		//等待启动信号
-		pthread_mutex_lock(&mtx_e);
+
 		pthread_cond_wait(&e_go, &mtx_e);
-		pthread_mutex_unlock(&mtx_e);
+		
 	}
+	e_waiting = false;
+	pthread_mutex_unlock(&mtx_e);
+	pthread_mutex_unlock(&mtx_e_in);
 	//获得启动信号后或右方无来车，抢占第二个路口，释放第一个路口
 	pthread_mutex_lock(&c);
 	pthread_mutex_unlock(&b);
+	e_coming = false;
 	deadlock_detect++;
 	//进入路口耗费时间
-	usleep(100);
+	usleep(1000);
 	
 	//如果等待过右方车，且右方仍然有车，给它发送启动信号，左右车同时行进不会相互干扰
 	//无论是否发生过死锁，此时等待在路口外的右车行为是一致的
@@ -122,7 +131,7 @@ void* manage_e(void*) {
 		pthread_cond_signal(&n_go);
 	//若左方有车等待，给它发送一个启动信号，由它给队列的下一辆车发送启动信号
 	//左方等待的车辆已在路口内，因此无需检查是否队列中仍有车
-	if (s_coming)
+	if (s_waiting)
 		pthread_cond_signal(&s_go);
 	//左方若无车，给自己的队列中下一辆车发送启动信号
 	else if (from_e.count)
@@ -138,12 +147,14 @@ void* manage_e(void*) {
 void* manage_s(void*) {
 	//保护用
 	pthread_mutex_lock(&mtx_s_in);
+	pthread_mutex_lock(&mtx_s);
 	//在路口外等待出发信号唤醒,收到出发信号后进入下一步
-	pthread_cond_wait(&s_go, &mtx_s_in);
-	pthread_mutex_unlock(&mtx_s_in);
+	pthread_cond_wait(&s_go, &mtx_s);
+
 
 	//标记该方向有车进入，左方车辆如果检查到该值为真，会停在其第一个路口内等待本车通过
 	s_coming = true;
+	s_waiting = false;
 	//从对应方向队列中取出头车
 	int num = from_s.car_leave();
 	//输出车辆到达路口的相关信息
@@ -161,11 +172,11 @@ void* manage_s(void*) {
 		pthread_cond_signal(&deadlock);
 
 		//停在路口外，等待死锁解决后重新启动
-		pthread_mutex_lock(&mtx_s);
+
 		pthread_cond_wait(&dead_solve, &mtx_s);
 		//由于左侧车等待过该车，死锁解决后通过时将会发出一个启动信号，接收此信号
 		pthread_cond_wait(&s_go, &mtx_s);
-		pthread_mutex_unlock(&mtx_s);
+
 	}
 	else
 		pthread_mutex_unlock(&mtx);
@@ -175,7 +186,7 @@ void* manage_s(void*) {
 	from_s.count--;
 	pthread_mutex_lock(&a);
 	//进入路口耗费时间
-	usleep(100);
+	usleep(1000);
 
 	//此时检查右方是否有来车，若有则等待
 	//右方车辆通过后会给它发送一个启动信号
@@ -186,17 +197,23 @@ void* manage_s(void*) {
 	if (e_coming) {
 		//设置曾等待
 		waited = true;
+		s_waiting = true;
 		//等待启动信号
-		pthread_mutex_lock(&mtx_s);
+
 		pthread_cond_wait(&s_go, &mtx_s);
-		pthread_mutex_unlock(&mtx_s);
-	}
+
+	}		
+	s_waiting = false;
+	pthread_mutex_unlock(&mtx_s);
+	pthread_mutex_unlock(&mtx_s_in);
 	//获得启动信号后或右方无来车，抢占第二个路口，释放第一个路口
 	pthread_mutex_lock(&b);
 	pthread_mutex_unlock(&a);
+	s_coming = false;
+	
 	deadlock_detect++;
 	//进入路口耗费时间
-	usleep(100);
+	usleep(1000);
 
 	//如果等待过右方车，且右方仍然有车，给它发送启动信号，左右车同时行进不会相互干扰
 	//无论是否发生过死锁，此时等待在路口外的右车行为是一致的
@@ -204,7 +221,7 @@ void* manage_s(void*) {
 		pthread_cond_signal(&e_go);
 	//若左方有车等待，给它发送一个启动信号，由它给队列的下一辆车发送启动信号
 	//左方等待的车辆已在路口内，因此无需检查是否队列中仍有车
-	if (w_coming)
+	if (w_waiting)
 		pthread_cond_signal(&w_go);
 	//左方若无车，给自己的队列中下一辆车发送启动信号
 	else if (from_s.count)
@@ -215,17 +232,20 @@ void* manage_s(void*) {
 	//释放第二个路口，离开
 	cout << "car " << num << " from South leaving crossing" << endl;
 	pthread_mutex_unlock(&b);
+
 }
 
 void* manage_w(void*) {
 	//保护用
 	pthread_mutex_lock(&mtx_w_in);
+	pthread_mutex_lock(&mtx_w);
 	//在路口外等待出发信号唤醒,收到出发信号后进入下一步
-	pthread_cond_wait(&w_go, &mtx_w_in);
-	pthread_mutex_unlock(&mtx_w_in);
+	pthread_cond_wait(&w_go, &mtx_w);
+
 
 	//标记该方向有车进入，左方车辆如果检查到该值为真，会停在其第一个路口内等待本车通过
 	w_coming = true;
+	w_waiting = false;
 	//从对应方向队列中取出头车
 	int num = from_w.car_leave();
 	//输出车辆到达路口的相关信息
@@ -243,11 +263,11 @@ void* manage_w(void*) {
 		pthread_cond_signal(&deadlock);
 
 		//停在路口外，等待死锁解决后重新启动
-		pthread_mutex_lock(&mtx_w);
+
 		pthread_cond_wait(&dead_solve, &mtx_w);
 		//由于左侧车等待过该车，死锁解决后通过时将会发出一个启动信号，接收此信号
 		pthread_cond_wait(&w_go, &mtx_w);
-		pthread_mutex_unlock(&mtx_w);
+
 	}
 	else
 		pthread_mutex_unlock(&mtx);
@@ -257,7 +277,7 @@ void* manage_w(void*) {
 	from_w.count--;
 	pthread_mutex_lock(&d);
 	//进入路口耗费时间
-	usleep(100);
+	usleep(1000);
 
 	//此时检查右方是否有来车，若有则等待
 	//右方车辆通过后会给它发送一个启动信号
@@ -268,17 +288,21 @@ void* manage_w(void*) {
 	if (s_coming) {
 		//设置曾等待
 		waited = true;
+		w_waiting = true;
 		//等待启动信号
-		pthread_mutex_lock(&mtx_w);
 		pthread_cond_wait(&w_go, &mtx_w);
-		pthread_mutex_unlock(&mtx_w);
 	}
+	w_waiting = false;
+	//允许下一辆车启动
+	pthread_mutex_unlock(&mtx_w);
+	pthread_mutex_unlock(&mtx_w_in);
 	//获得启动信号后或右方无来车，抢占第二个路口，释放第一个路口
 	pthread_mutex_lock(&a);
 	pthread_mutex_unlock(&d);
+	w_coming = false;
 	deadlock_detect++;
 	//进入路口耗费时间
-	usleep(100);
+	usleep(1000);
 
 	//如果等待过右方车，且右方仍然有车，给它发送启动信号，左右车同时行进不会相互干扰
 	//无论是否发生过死锁，此时等待在路口外的右车行为是一致的
@@ -286,7 +310,7 @@ void* manage_w(void*) {
 		pthread_cond_signal(&s_go);
 	//若左方有车等待，给它发送一个启动信号，由它给队列的下一辆车发送启动信号
 	//左方等待的车辆已在路口内，因此无需检查是否队列中仍有车
-	if (n_coming)
+	if (n_waiting)
 		pthread_cond_signal(&n_go);
 	//左方若无车，给自己的队列中下一辆车发送启动信号
 	else if (from_w.count)
@@ -297,17 +321,20 @@ void* manage_w(void*) {
 	//释放第二个路口，离开
 	cout << "car " << num << " from West leaving crossing" << endl;
 	pthread_mutex_unlock(&a);
+
 }
 
 void* manage_n(void*) {
 	//保护用
 	pthread_mutex_lock(&mtx_n_in);
+	pthread_mutex_lock(&mtx_n);
 	//在路口外等待出发信号唤醒,收到出发信号后进入下一步
-	pthread_cond_wait(&n_go, &mtx_n_in);
-	pthread_mutex_unlock(&mtx_n_in);
+	pthread_cond_wait(&n_go, &mtx_n);
+
 
 	//标记该方向有车进入，左方车辆如果检查到该值为真，会停在其第一个路口内等待本车通过
 	n_coming = true;
+	n_waiting = false;
 	//从对应方向队列中取出头车
 	int num = from_n.car_leave();
 	//输出车辆到达路口的相关信息
@@ -325,11 +352,11 @@ void* manage_n(void*) {
 		pthread_cond_signal(&deadlock);
 
 		//停在路口外，等待死锁解决后重新启动
-		pthread_mutex_lock(&mtx_n);
+
 		pthread_cond_wait(&dead_solve, &mtx_n);
 		//由于左侧车等待过该车，死锁解决后通过时将会发出一个启动信号，接收此信号
 		pthread_cond_wait(&n_go, &mtx_n);
-		pthread_mutex_unlock(&mtx_n);
+
 	}
 	else
 		pthread_mutex_unlock(&mtx);
@@ -339,7 +366,7 @@ void* manage_n(void*) {
 	from_n.count--;
 	pthread_mutex_lock(&c);
 	//进入路口耗费时间
-	usleep(100);
+	usleep(1000);
 
 	//此时检查右方是否有来车，若有则等待
 	//右方车辆通过后会给它发送一个启动信号
@@ -350,17 +377,23 @@ void* manage_n(void*) {
 	if (w_coming) {
 		//设置曾等待
 		waited = true;
+		n_waiting = true;
 		//等待启动信号
-		pthread_mutex_lock(&mtx_n);
+
 		pthread_cond_wait(&n_go, &mtx_n);
-		pthread_mutex_unlock(&mtx_n);
+		
 	}
+	n_waiting = false;
+	//允许下一辆车启动
+	pthread_mutex_unlock(&mtx_n);
+	pthread_mutex_unlock(&mtx_n_in);
 	//获得启动信号后或右方无来车，抢占第二个路口，释放第一个路口
 	pthread_mutex_lock(&d);
 	pthread_mutex_unlock(&c);
+	n_coming = false;
 	deadlock_detect++;
 	//进入路口耗费时间
-	usleep(100);
+	usleep(1000);
 
 	//如果等待过右方车，且右方仍然有车，给它发送启动信号，左右车同时行进不会相互干扰
 	//无论是否发生过死锁，此时等待在路口外的右车行为是一致的
@@ -368,7 +401,7 @@ void* manage_n(void*) {
 		pthread_cond_signal(&w_go);
 	//若左方有车等待，给它发送一个启动信号，由它给队列的下一辆车发送启动信号
 	//左方等待的车辆已在路口内，因此无需检查是否队列中仍有车
-	if (e_coming)
+	if (e_waiting)
 		pthread_cond_signal(&e_go);
 	//左方若无车，给自己的队列中下一辆车发送启动信号
 	else if (from_n.count)
@@ -379,6 +412,7 @@ void* manage_n(void*) {
 	//释放第二个路口，离开
 	cout << "car " << num << " from North leaving crossing" << endl;
 	pthread_mutex_unlock(&d);
+
 }
 
 
@@ -389,6 +423,9 @@ void* solving_deadlock(void*) {
 		pthread_mutex_lock(&deadl);
 		pthread_cond_wait(&deadlock, &deadl);
 		pthread_mutex_unlock(&deadl);
+
+		//睡眠1秒 保证所有方向车辆均已经进入路口
+		usleep(1100);
 		//此时的状态为：某方向车辆准备进入第一个路口，其他三个方向均在第一个路口内等待启动信号
 		//报deadlock信息
 		cout << "DEADLOCK: car jam detected, signalling ";
@@ -415,6 +452,8 @@ int main() {
 	string carlist;
 	cin >> carlist;
 	
+
+
 	//将车放入队列，并为每辆车创建线程
 	//各个方向首个创建的线程获取互斥锁，等待唤醒命令
 	pthread_t thread_list[MAXLENGTH];
@@ -442,15 +481,19 @@ int main() {
 		}
 	}
 
+
 	//死锁检测线程
 	pthread_t de_dt;
 	pthread_create(&de_dt, 0, solving_deadlock, 0);
 
+
+	usleep(1000);
 	//唤醒各方向首个线程
 	pthread_cond_signal(&w_go);
 	pthread_cond_signal(&s_go);
 	pthread_cond_signal(&n_go);
 	pthread_cond_signal(&e_go);
+
 
 	for (int i = 0; i < carlist.length(); i++) {
 		pthread_join(thread_list[i], nullptr);
@@ -461,11 +504,12 @@ int main() {
 
 void car_queue::car_enter(int n)
 {
-	tail++;
 	if (tail >= MAXLENGTH)
 		return;
-	else
+	else {
 		car_id[tail] = n;
+		tail++;
+	}
 	count++;
 }
 
